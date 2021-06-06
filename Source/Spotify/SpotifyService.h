@@ -25,6 +25,13 @@ class SPOTIFY_API USpotifyService : public UGameInstanceSubsystem, public FTicka
 
 protected:
 
+	
+	void SaveToSlot();
+
+	bool LoadCredentials();
+	
+	FString SaveSlotName = "SpotifyCredentials";
+	
 	// Your applications public key.
 	UPROPERTY()
 	FString ClientKey = "43bf2bdff42d4bc8877fdd9d2ff77717";

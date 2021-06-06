@@ -4,12 +4,56 @@
 #include "SpotifyService.h"
 #include "Spotify.h"
 #include "SHA256.h"
+#include "SpotifyCredentials.h"
 #include "Common/TcpSocketBuilder.h"
 #include "Interfaces/IHttpResponse.h"
+#include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
+
+void USpotifyService::SaveToSlot()
+{
+	auto SaveGame = (USpotifyCredentials*)UGameplayStatics::CreateSaveGameObject(USpotifyCredentials::StaticClass());
+	SaveGame->SetValues(Verify, Challenge, RefreshKey);
+	UGameplayStatics::SaveGameToSlot(SaveGame, SaveSlotName, 0);
+}
+
+bool USpotifyService::LoadCredentials()
+{
+	if(UGameplayStatics::DoesSaveGameExist(SaveSlotName, 0))
+	{
+		auto SaveGame = (USpotifyCredentials*)UGameplayStatics::LoadGameFromSlot(SaveSlotName, 0);
+		if(SaveGame && !SaveGame->Verify.IsEmpty() && !SaveGame->Challenge.IsEmpty() && !SaveGame->RefreshKey.IsEmpty())
+		{
+			Verify = SaveGame->Verify;
+			Challenge = SaveGame->Challenge;
+			RefreshKey = SaveGame->RefreshKey;
+			return true;
+		}
+	}
+	return false;
+}
 
 void USpotifyService::BeginAuthorization()
 {
+
+	// Just a bunch of characters.
+	const FString RandomChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+	// Create a random string for the Secret-keyless authentication.
+	for (int i = 0; i < 64; i++)
+	{
+		Verify += RandomChars.GetCharArray()[FMath::RandRange(0, RandomChars.Len() - 1)];
+	}
+	// Create and Base64 encode the challenge
+	Challenge = FBase64::Encode(sha256(Verify));
+	Challenge = Challenge.Replace(TEXT("+"), TEXT("-"))
+		.Replace(TEXT("/"), TEXT("_"))
+		.Replace(TEXT(" "), TEXT(""));
+	Challenge.RemoveFromEnd("=");
+	
+	UKismetSystemLibrary::LaunchURL(FString::Printf(TEXT("https://accounts.spotify.com/authorize?response_type=code&client_id=%s&redirect_uri=%s:%d&scope=user-modify-playback-state,user-read-playback-state,user-read-currently-playing&code_challenge=%s&code_challenge_method=S256"),
+		*ClientKey, *RedirectURL, Port, *Challenge));
+	
 	ServerSocket = CreateServerSocket();
 
 	TSharedRef<FInternetAddr> RemoteAddr = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->CreateInternetAddr();
@@ -251,30 +295,24 @@ bool USpotifyService::ShouldCreateSubsystem(UObject* Outer) const
 void USpotifyService::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-
-	// Just a bunch of characters.
-	const FString RandomChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-
-	// Create a random string for the Secret-keyless authentication.
-	
-	for (int i = 0; i < 64; i++)
-	{
-		Verify += RandomChars.GetCharArray()[FMath::RandRange(0, RandomChars.Len() - 1)];
-	}
-	// Create and Base64 encode the challenge.
-	Challenge = FBase64::Encode(sha256(Verify));
-	Challenge = Challenge.Replace(TEXT("+"), TEXT("-"))
-		.Replace(TEXT("/"), TEXT("_"))
-		.Replace(TEXT(" "), TEXT(""));
-	Challenge.RemoveFromEnd("=");
 	Http = &FModuleManager::LoadModuleChecked<FHttpModule>("Http").Get();
-	UKismetSystemLibrary::LaunchURL(FString::Printf(TEXT("https://accounts.spotify.com/authorize?response_type=code&client_id=%s&redirect_uri=%s:%d&scope=user-modify-playback-state,user-read-playback-state,user-read-currently-playing&code_challenge=%s&code_challenge_method=S256"),
-		*ClientKey, *RedirectURL, Port, *Challenge));
+
+	if(LoadCredentials())
+	{
+		RefreshAccessKey();
+		return;
+	}
+	
+
 	BeginAuthorization();
 }
 
 void USpotifyService::Deinitialize()
 {
+	if(!RefreshKey.IsEmpty() && !Verify.IsEmpty() && !Challenge.IsEmpty())
+	{
+		SaveToSlot();
+	}
 	if(ConnectionSocket)
 	{
 		ConnectionSocket->Close();
