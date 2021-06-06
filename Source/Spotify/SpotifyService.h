@@ -8,35 +8,11 @@
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "SpotifyService.generated.h"
 
-UENUM()
-enum class ESpotifyURLType : uint8
-{
-	AuthCode,
-	AccessKey,
-	Playback,
-	PlayResume,
-	Pause,
-	Next,
-	Previous,
-	Seek,
-	Repeat,
-	Volume,
-	Shuffle
-};
 
-static TMap<ESpotifyURLType, FString> SpotifyUrls = {
-	{ ESpotifyURLType::AuthCode,	TEXT("https://accounts.spotify.com/authorize?response_type=code&client_id=%s&redirect_uri=%s:%d&scope=%s&state=%s&code_challenge_method=S256") },
-	{ ESpotifyURLType::AccessKey,		TEXT("https://accounts.spotify.com/api/token") },
-	{ ESpotifyURLType::Playback ,	TEXT("https://api.spotify.com/v1/me/player") },
-	{ ESpotifyURLType::PlayResume,	TEXT("https://api.spotify.com/v1/me/player/play") },
-	{ ESpotifyURLType::Pause,		TEXT("https://api.spotify.com/v1/me/player/pause") },
-	{ ESpotifyURLType::Next,		TEXT("https://api.spotify.com/v1/me/player/next") },
-	{ ESpotifyURLType::Previous,	TEXT("https://api.spotify.com/v1/me/player/previous") },
-	{ ESpotifyURLType::Seek,		TEXT("https://api.spotify.com/v1/me/player/seek") },
-	{ ESpotifyURLType::Repeat,		TEXT("https://api.spotify.com/v1/me/player/repeat") },
-	{ ESpotifyURLType::Volume,		TEXT("https://api.spotify.com/v1/me/player/volume") },
-	{ ESpotifyURLType::Shuffle,	TEXT("https://api.spotify.com/v1/me/player/shuffle") }
-};
+// Params: Song Name, Artists, Album Name, Volume, Progress, Duration, isPlaying
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_SevenParams(FOnReceivePlaybackDataDelegate, FString, SongName, const TArray<FString>&,
+	Artists, FString, AlbumName, float, Volume, int, Progress, int, Duration, bool, isPlaying);
+
 
 /**
  * This Class handles the Spotify API
@@ -83,6 +59,9 @@ protected:
 
 	UPROPERTY()
 	FDateTime AccessKeyExpiration;
+
+	UPROPERTY(BlueprintAssignable)
+	FOnReceivePlaybackDataDelegate OnReceivePlaybackDataDelegate;
 
 	FHttpModule* Http;
 

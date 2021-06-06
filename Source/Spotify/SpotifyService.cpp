@@ -147,8 +147,8 @@ void USpotifyService::RequestPlaybackInformation()
 	Request->SetVerb("GET");
 	Request->SetHeader("Authorization", FString::Printf(TEXT("Bearer %s"), *AccessKey));
 	Request->OnProcessRequestComplete().BindUObject(this, &USpotifyService::ReceivePlaybackInformation);
-	UE_LOG(LogSpotify, Warning, TEXT("Requesting Playback Info."));
 	Request->ProcessRequest();
+	UE_LOG(LogSpotify, Verbose, TEXT("Requesting Playback Info."));
 }
 
 void USpotifyService::RequestPlay()
@@ -165,8 +165,6 @@ void USpotifyService::ReceiveRefreshKey(FHttpRequestPtr Request, FHttpResponsePt
 
 	if( Response->GetResponseCode() >= 200 && Response->GetResponseCode() < 300)
 	{
-		//UE_LOG(LogSpotify, Warning, TEXT("REQ: %s"), *Response->GetContentAsString());
-
 		const TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
 
 		TSharedPtr<FJsonObject> ParsedResponse;
@@ -216,8 +214,7 @@ void USpotifyService::ReceivePlaybackInformation(FHttpRequestPtr Request, FHttpR
 				ArtistNames.Add( Artist->AsObject()->GetStringField("name"));
 			}
 
-
-			UE_LOG(LogSpotify, Warning, TEXT("Song: %s, Album: %s, Duration: %d, Progress: %d"), *SongName, *AlbumName, Duration, Progress);
+			OnReceivePlaybackDataDelegate.Broadcast(SongName, ArtistNames, AlbumName, 1.f, Duration, Progress, Playing);
 			
 		}
 	}
