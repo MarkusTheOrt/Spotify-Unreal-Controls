@@ -81,6 +81,9 @@ protected:
 	UPROPERTY()
 	FString Challenge;
 
+	UPROPERTY()
+	FDateTime AccessKeyExpiration;
+
 	FHttpModule* Http;
 
 	// This Socket listens for incoming connection on localhost:Port.
@@ -94,6 +97,10 @@ protected:
 
 	// Whether or not we should listen on a pending connection.
 	bool bListening;
+
+	FTimerHandle AccessKeyExpireTimerHandle;
+
+	FTimerHandle PlaybackInfoTimerHandle;
 	
 protected:
 
@@ -114,6 +121,8 @@ protected:
 
 	// Filter Auth key from HTTP Request.
 	void RetrieveAuthKey(FString HttpResponse);
+
+	void RefreshAccessKey();
 
 #pragma endregion
 

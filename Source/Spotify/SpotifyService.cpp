@@ -5,7 +5,6 @@
 #include "Spotify.h"
 #include "SHA256.h"
 #include "Common/TcpSocketBuilder.h"
-#include "GenericPlatform/GenericPlatformHttp.h"
 #include "Interfaces/IHttpResponse.h"
 #include "Kismet/KismetSystemLibrary.h"
 
@@ -109,6 +108,21 @@ void USpotifyService::RetrieveAuthKey(FString HttpResponse)
 	
 }
 
+void USpotifyService::RefreshAccessKey()
+{
+	if(RefreshKey.IsEmpty() || ClientKey.IsEmpty()) return;
+
+	UE_LOG(LogSpotify, Verbose, TEXT("Requesting new Access Key."));
+	
+	auto Request = Http->CreateRequest();
+	Request->SetURL("https://accounts.spotify.com/api/token");
+	Request->SetVerb("POST");
+	Request->SetHeader("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8");
+	Request->SetContentAsString(FString::Printf(TEXT("grant_type=refresh_token&refresh_token=%s&client_id=%s"), *RefreshKey, *ClientKey));
+	Request->OnProcessRequestComplete().BindUObject(this, &USpotifyService::ReceiveRefreshKey);
+	Request->ProcessRequest();
+}
+
 void USpotifyService::RequestRefreshKey()
 {
 	if(!Http) return;
@@ -126,6 +140,15 @@ void USpotifyService::RequestRefreshKey()
 
 void USpotifyService::RequestPlaybackInformation()
 {
+	if(!Http || AccessKey.IsEmpty()) return;
+
+	auto Request = Http->CreateRequest();
+	Request->SetURL("https://api.spotify.com/v1/me/player/currently-playing?market=from_token");
+	Request->SetVerb("GET");
+	Request->SetHeader("Authorization", FString::Printf(TEXT("Bearer %s"), *AccessKey));
+	Request->OnProcessRequestComplete().BindUObject(this, &USpotifyService::ReceivePlaybackInformation);
+	UE_LOG(LogSpotify, Warning, TEXT("Requesting Playback Info."));
+	Request->ProcessRequest();
 }
 
 void USpotifyService::RequestPlay()
@@ -142,7 +165,22 @@ void USpotifyService::ReceiveRefreshKey(FHttpRequestPtr Request, FHttpResponsePt
 
 	if( Response->GetResponseCode() >= 200 && Response->GetResponseCode() < 300)
 	{
-		UE_LOG(LogSpotify, Warning, TEXT("REQ: %s"), *Response->GetContentAsString());
+		//UE_LOG(LogSpotify, Warning, TEXT("REQ: %s"), *Response->GetContentAsString());
+
+		const TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
+
+		TSharedPtr<FJsonObject> ParsedResponse;
+		if(FJsonSerializer::Deserialize(JsonReader, ParsedResponse))
+		{
+			const int Expires = ParsedResponse->GetIntegerField("expires_in");
+			AccessKeyExpiration = FDateTime::Now() + FTimespan(0, 0, Expires);
+			AccessKey = ParsedResponse->GetStringField("access_token");
+			RefreshKey = ParsedResponse->GetStringField("refresh_token");
+			// Resfresh Access Key 50 Seconds before it expires.
+			GetWorld()->GetTimerManager().SetTimer(AccessKeyExpireTimerHandle, this, &USpotifyService::RefreshAccessKey, Expires - 50, false);
+			GetWorld()->GetTimerManager().SetTimer(PlaybackInfoTimerHandle, this, &USpotifyService::RequestPlaybackInformation, 1, true);
+		}
+		
 		return;
 	}
 	UE_LOG(LogSpotify, Error, TEXT("RES: %s"), *Response->GetContentAsString());
@@ -152,6 +190,41 @@ void USpotifyService::ReceiveRefreshKey(FHttpRequestPtr Request, FHttpResponsePt
 void USpotifyService::ReceivePlaybackInformation(FHttpRequestPtr Request, FHttpResponsePtr Response,
 	bool bWasSuccessful)
 {
+	if(!bWasSuccessful) return;
+	if(Response->GetResponseCode() == 200)
+	{
+		const TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
+		TSharedPtr<FJsonObject> ParsedResponse;
+
+		if(FJsonSerializer::Deserialize(JsonReader, ParsedResponse))
+		{
+			
+			int Progress = ParsedResponse->GetIntegerField("progress_ms");
+			bool Playing = ParsedResponse->GetBoolField("is_playing");
+
+			
+			const TSharedPtr<FJsonObject> Item = ParsedResponse->GetObjectField("item");
+			const TArray<TSharedPtr<FJsonValue>> Artists = Item->GetArrayField("artists");
+			const TSharedPtr<FJsonObject> Album = Item->GetObjectField("album");
+			
+			int Duration = Item->GetIntegerField("duration_ms");
+			FString SongName = Item->GetStringField("name");
+			FString AlbumName = Album->GetStringField("name");
+			TArray<FString> ArtistNames;
+			for(const auto& Artist : Artists)
+			{
+				ArtistNames.Add( Artist->AsObject()->GetStringField("name"));
+			}
+
+
+			UE_LOG(LogSpotify, Warning, TEXT("Song: %s, Album: %s, Duration: %d, Progress: %d"), *SongName, *AlbumName, Duration, Progress);
+			
+		}
+	}
+	if(Response->GetResponseCode() == 204)
+	{
+		UE_LOG(LogSpotify, Verbose, TEXT("Received Playback, no device playing or in private session."));
+	}
 }
 
 void USpotifyService::ReceivePlay(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
@@ -198,7 +271,7 @@ void USpotifyService::Initialize(FSubsystemCollectionBase& Collection)
 		.Replace(TEXT(" "), TEXT(""));
 	Challenge.RemoveFromEnd("=");
 	Http = &FModuleManager::LoadModuleChecked<FHttpModule>("Http").Get();
-	UKismetSystemLibrary::LaunchURL(FString::Printf(TEXT("https://accounts.spotify.com/authorize?response_type=code&client_id=%s&redirect_uri=%s:%d&scope=user-modify-playback-state&code_challenge=%s&code_challenge_method=S256"),
+	UKismetSystemLibrary::LaunchURL(FString::Printf(TEXT("https://accounts.spotify.com/authorize?response_type=code&client_id=%s&redirect_uri=%s:%d&scope=user-modify-playback-state,user-read-playback-state,user-read-currently-playing&code_challenge=%s&code_challenge_method=S256"),
 		*ClientKey, *RedirectURL, Port, *Challenge));
 	BeginAuthorization();
 }
