@@ -72,9 +72,6 @@ protected:
 	// This Socket exchanges Data.
 	FSocket* ConnectionSocket;
 
-	// @TODO: Remove.
-	FIPv4Endpoint RemoteConnectionEndpoint;
-
 	// Whether or not we should listen on a pending connection.
 	bool bListening;
 
@@ -83,6 +80,7 @@ protected:
 	FTimerHandle PlaybackInfoTimerHandle;
 
 	// Only call big update whenever song ID changes.
+	UPROPERTY(Transient)
 	FString SongId;
 
 public:

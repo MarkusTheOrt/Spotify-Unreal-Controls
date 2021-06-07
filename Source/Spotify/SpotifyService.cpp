@@ -94,7 +94,6 @@ void USpotifyService::TCPListener()
 		ConnectionSocket = ServerSocket->Accept(*RemoteAddress, TEXT("ServerConnection"));
 		if(ConnectionSocket != nullptr)
 		{
-			RemoteConnectionEndpoint = FIPv4Endpoint(RemoteAddress);
 			bListening = true;
 		}
 	}
