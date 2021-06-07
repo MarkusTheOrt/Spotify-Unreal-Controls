@@ -5,7 +5,9 @@
 #include "Spotify.h"
 #include "SHA256.h"
 #include "SpotifyCredentials.h"
+#include "SpotifyDevSettings.h"
 #include "Common/TcpSocketBuilder.h"
+#include "GenericPlatform/GenericPlatformHttp.h"
 #include "Interfaces/IHttpResponse.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
@@ -51,8 +53,8 @@ void USpotifyService::BeginAuthorization()
 		.Replace(TEXT(" "), TEXT(""));
 	Challenge.RemoveFromEnd("=");
 	
-	UKismetSystemLibrary::LaunchURL(FString::Printf(TEXT("https://accounts.spotify.com/authorize?response_type=code&client_id=%s&redirect_uri=%s:%d&scope=user-modify-playback-state,user-read-playback-state,user-read-currently-playing&code_challenge=%s&code_challenge_method=S256"),
-		*ClientKey, *RedirectURL, Port, *Challenge));
+	UKismetSystemLibrary::LaunchURL(FString::Printf(TEXT("https://accounts.spotify.com/authorize?response_type=code&client_id=%s&redirect_uri=%s&scope=user-modify-playback-state,user-read-playback-state,user-read-currently-playing&code_challenge=%s&code_challenge_method=S256"),
+		*ClientKey, *RedirectURL, *Challenge));
 	
 	ServerSocket = CreateServerSocket();
 
@@ -61,6 +63,7 @@ void USpotifyService::BeginAuthorization()
 
 FSocket* USpotifyService::CreateServerSocket()
 {
+	const uint16 Port = FGenericPlatformHttp::GetUrlPort(RedirectURL).GetValue();
 	const FIPv4Endpoint Endpoint(FIPv4Address::InternalLoopback, Port);
 	FSocket* NewSock = FTcpSocketBuilder(TEXT("HttpServer"))
 		.AsReusable()
@@ -121,7 +124,7 @@ void USpotifyService::ConnectionListener()
 		Cache-Control: no-cache, private\n\r\
 		Server: Unreal-Socket-Server\n\r\n\r\
 		<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\r\n<html><head>\r\n<title>Success!</title>\
-		\r\n</head><body>\r<h1>Success!</h1>\n<p>You can close this document now!</p></body></html>");
+		\r\n</head><body>\r<h1>Success!</h1>\n<p>You can close this window now!</p></body></html>");
 
 	const TCHAR* ResponseData = *Response;
 	const int32 ResponseSize = FCString::Strlen(ResponseData);
@@ -140,7 +143,6 @@ void USpotifyService::RetrieveAuthKey(FString HttpResponse)
 	if(AuthMatcher.FindNext())
 	{
 		AuthKey = AuthMatcher.GetCaptureGroup(1);
-		UE_LOG(LogSpotify, Warning, TEXT("%s"), *AuthKey);
 		bListening = false;
 		ServerSocket->Close();
 		RequestRefreshKey();
@@ -174,8 +176,8 @@ void USpotifyService::RequestRefreshKey()
 	auto Request = Http->CreateRequest();
 	Request->SetURL("https://accounts.spotify.com/api/token");
 	Request->SetVerb("POST");
-	const FString Body = FString::Printf(TEXT("grant_type=authorization_code&code=%s&redirect_uri=%s:%d&client_id=%s&code_verifier=%s"),
-		*AuthKey, *RedirectURL, Port, *ClientKey, *Verify);
+	const FString Body = FString::Printf(TEXT("grant_type=authorization_code&code=%s&redirect_uri=%s&client_id=%s&code_verifier=%s"),
+		*AuthKey, *RedirectURL, *ClientKey, *Verify);
 	Request->SetContentAsString(Body);
 	Request->SetHeader("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8");
 	Request->OnProcessRequestComplete().BindUObject(this, &USpotifyService::ReceiveRefreshKey);
@@ -195,12 +197,67 @@ void USpotifyService::RequestPlaybackInformation()
 	UE_LOG(LogSpotify, Verbose, TEXT("Requesting Playback Info."));
 }
 
+void USpotifyService::PlaybackRequest(const FString& Url, const FString& Verb)
+{
+	if(!Http || AccessKey.IsEmpty()) return;
+	
+	auto Request = Http->CreateRequest();
+	Request->SetURL(Url);
+	Request->SetVerb(Verb);
+	Request->SetHeader("Authorization", FString::Printf(TEXT("Bearer %s"), *AccessKey));
+	Request->OnProcessRequestComplete().BindUObject(this, &USpotifyService::ReceivePlay);
+	Request->ProcessRequest();
+}
+
+void USpotifyService::PlaybackRequest(const FString& Url, const FString& Verb, const FString& Body)
+{
+	if(!Http || AccessKey.IsEmpty()) return;
+	
+	auto Request = Http->CreateRequest();
+	Request->SetURL(Url);
+	Request->SetVerb(Verb);
+	Request->SetHeader("Authorization", FString::Printf(TEXT("Bearer %s"), *AccessKey));
+	Request->SetContentAsString(Body);
+	Request->OnProcessRequestComplete().BindUObject(this, &USpotifyService::ReceivePlay);
+	Request->ProcessRequest();
+}
+
 void USpotifyService::RequestPlay()
 {
+	PlaybackRequest("https://api.spotify.com/v1/me/player/play", "PUT");
+	UE_LOG(LogSpotify, Verbose, TEXT("Requesting Resume Playback."));
 }
 
 void USpotifyService::RequestPause()
 {
+	PlaybackRequest("https://api.spotify.com/v1/me/player/pause", "PUT");
+	UE_LOG(LogSpotify, Verbose, TEXT("Requesting Pause Playback."));
+}
+
+void USpotifyService::RequestNext()
+{
+	PlaybackRequest("https://api.spotify.com/v1/me/player/next", "POST");
+	UE_LOG(LogSpotify, Verbose, TEXT("Requesting Next Song."));
+}
+
+void USpotifyService::RequestPrev()
+{
+	PlaybackRequest("https://api.spotify.com/v1/me/player/previous", "POST");
+	UE_LOG(LogSpotify, Verbose, TEXT("Requesting Previous Song."));
+}
+
+void USpotifyService::Seek(int TimeInSeconds)
+{
+	const int TimeInMS = TimeInSeconds * 1000;
+	PlaybackRequest("https://api.spotify.com/v1/me/player/previous", "PUT", FString::Printf(TEXT("position_ms=%d"), TimeInMS));
+	UE_LOG(LogSpotify, Verbose, TEXT("Requesting Seek."));
+}
+
+void USpotifyService::SetVolume(float Val)
+{
+	const int VolPercent = FMath::Clamp<float>(Val * 100, 0, 100);
+	PlaybackRequest("https://api.spotify.com/v1/me/player/previous", "PUT", FString::Printf(TEXT("volume_percent=%d"), VolPercent));
+	UE_LOG(LogSpotify, Verbose, TEXT("Requesting Volume."));
 }
 
 void USpotifyService::ReceiveRefreshKey(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
@@ -258,6 +315,12 @@ void USpotifyService::ReceivePlaybackInformation(FHttpRequestPtr Request, FHttpR
 				ArtistNames.Add( Artist->AsObject()->GetStringField("name"));
 			}
 
+			if(SongId == Item->GetStringField("id"))
+			{
+				OnPlaybackAdvancedDelegate.Broadcast(Duration, Progress);
+				return;
+			}
+			SongId = Item->GetStringField("id");
 			OnReceivePlaybackDataDelegate.Broadcast(SongName, ArtistNames, AlbumName, 1.f, Duration, Progress, Playing);
 			
 		}
@@ -270,14 +333,24 @@ void USpotifyService::ReceivePlaybackInformation(FHttpRequestPtr Request, FHttpR
 
 void USpotifyService::ReceivePlay(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
 {
-}
-
-void USpotifyService::ReceivePause(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
-{
+	if(!bWasSuccessful) return;
+	if(Response->GetResponseCode() == 204)
+	{
+		UE_LOG(LogSpotify, Verbose, TEXT("Request Successful."));
+	}
+	else if(Response->GetResponseCode() == 404)
+	{
+		UE_LOG(LogSpotify, Error, TEXT("Device not Found"));
+	}
+	else if(Response->GetResponseCode() == 403)
+	{
+		UE_LOG(LogSpotify, Error, TEXT("User is Non-Premium"));
+	}
 }
 
 void USpotifyService::OnError(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
 {
+	
 }
 
 
@@ -297,6 +370,11 @@ void USpotifyService::Initialize(FSubsystemCollectionBase& Collection)
 	Super::Initialize(Collection);
 	Http = &FModuleManager::LoadModuleChecked<FHttpModule>("Http").Get();
 
+	const auto Settings = GetDefault<USpotifyDevSettings>();
+	ClientKey = Settings->ClientId;
+	RedirectURL = Settings->Callback;
+	SaveSlotName = Settings->SaveSlotName;
+	
 	if(LoadCredentials())
 	{
 		RefreshAccessKey();

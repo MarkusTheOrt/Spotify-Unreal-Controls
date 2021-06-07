@@ -17,7 +17,8 @@ public class Spotify : ModuleRules
 			"Http",
 			"Networking",
 			"Sockets",
-			"Json"
+			"Json",
+			"DeveloperSettings"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]

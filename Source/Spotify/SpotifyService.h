@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
+#include "CoreMinimal.h" 
 #include "HttpModule.h"
 #include "Interfaces/IPv4/IPv4Endpoint.h"
 #include "Subsystems/GameInstanceSubsystem.h"
@@ -13,6 +13,7 @@
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_SevenParams(FOnReceivePlaybackDataDelegate, FString, SongName, const TArray<FString>&,
 	Artists, FString, AlbumName, float, Volume, int, Progress, int, Duration, bool, isPlaying);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnPlaybackAdvancedDelegate, int, Duration, int, Progress);
 
 /**
  * This Class handles the Spotify API
@@ -24,52 +25,45 @@ class SPOTIFY_API USpotifyService : public UGameInstanceSubsystem, public FTicka
 	GENERATED_BODY()
 
 protected:
-
 	
 	void SaveToSlot();
 
 	bool LoadCredentials();
-	
-	FString SaveSlotName = "SpotifyCredentials";
+
+	UPROPERTY(Transient)
+	FString SaveSlotName;
 	
 	// Your applications public key.
-	UPROPERTY()
-	FString ClientKey = "43bf2bdff42d4bc8877fdd9d2ff77717";
+	UPROPERTY(Transient)
+	FString ClientKey;
 
 	// Where a user should be redirected to after approving.
-	UPROPERTY()
-	FString RedirectURL = "http://localhost";
-
-	// The Port (443 for https, 80 for http) - default 3036 for no particular reason.
-	UPROPERTY()
-	uint16 Port = 3036;
+	UPROPERTY(Transient)
+	FString RedirectURL;
 
 	// The Retrieved Auth key.
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FString AuthKey;
 
 	// Access Key (the Key used for executing API calls).
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FString AccessKey;
 
 	// This key wont run out, it is used to refresh the Access key once it runs out.
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FString RefreshKey;
 
 	// For the Proof-Key-Challenge-Exchange (PKCE).
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FString Verify;
 
 	// The Auto-Generated Challenge for PKCE.
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FString Challenge;
 
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FDateTime AccessKeyExpiration;
-
-	UPROPERTY(BlueprintAssignable)
-	FOnReceivePlaybackDataDelegate OnReceivePlaybackDataDelegate;
-
+	
 	FHttpModule* Http;
 
 	// This Socket listens for incoming connection on localhost:Port.
@@ -87,6 +81,17 @@ protected:
 	FTimerHandle AccessKeyExpireTimerHandle;
 
 	FTimerHandle PlaybackInfoTimerHandle;
+
+	// Only call big update whenever song ID changes.
+	FString SongId;
+
+public:
+
+	UPROPERTY(BlueprintAssignable)
+	FOnReceivePlaybackDataDelegate OnReceivePlaybackDataDelegate;
+
+	UPROPERTY(BlueprintAssignable)
+	FOnPlaybackAdvancedDelegate OnPlaybackAdvancedDelegate;
 	
 protected:
 
@@ -123,10 +128,28 @@ protected:
 	void RequestPlaybackInformation();
 
 	// Request the player to start or resume playback.
+	UFUNCTION(BlueprintCallable)
 	void RequestPlay();
 
+	void PlaybackRequest(const FString& Url, const FString& Verb);
+
+	void PlaybackRequest(const FString& Url, const FString& Verb, const FString& Body);
+
 	// Request the player to pause playback.
+	UFUNCTION(BlueprintCallable)
 	void RequestPause();
+
+	UFUNCTION(BlueprintCallable)
+	void RequestNext();
+
+	UFUNCTION(BlueprintCallable)
+	void RequestPrev();
+
+	UFUNCTION(BlueprintCallable)
+	void Seek(int TimeInSeconds);
+
+	UFUNCTION(BlueprintCallable)
+	void SetVolume(float Val);
 	
 	/////////////////////////////////////////
 	// API Responses
@@ -139,9 +162,6 @@ protected:
 
 	// Whether the playback started or not.
 	void ReceivePlay(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
-
-	// Whether the playback is paused or not.
-	void ReceivePause(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
 	// Handle common error messages.
 	void OnError(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
