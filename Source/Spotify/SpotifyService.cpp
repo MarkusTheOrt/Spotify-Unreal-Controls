@@ -188,7 +188,7 @@ void USpotifyService::RequestPlaybackInformation()
 	if(!Http || AccessKey.IsEmpty()) return;
 
 	auto Request = Http->CreateRequest();
-	Request->SetURL("https://api.spotify.com/v1/me/player/currently-playing?market=from_token");
+	Request->SetURL("https://api.spotify.com/v1/me/player?market=from_token");
 	Request->SetVerb("GET");
 	Request->SetHeader("Authorization", FString::Printf(TEXT("Bearer %s"), *AccessKey));
 	Request->OnProcessRequestComplete().BindUObject(this, &USpotifyService::ReceivePlaybackInformation);
@@ -255,7 +255,7 @@ void USpotifyService::Seek(int TimeInSeconds)
 void USpotifyService::SetVolume(float Val)
 {
 	const int VolPercent = FMath::Clamp<float>(Val * 100, 0, 100);
-	PlaybackRequest("https://api.spotify.com/v1/me/player/previous", "PUT", FString::Printf(TEXT("volume_percent=%d"), VolPercent));
+	PlaybackRequest(FString::Printf(TEXT("https://api.spotify.com/v1/me/player/volume?volume_percent=%d"), VolPercent), "PUT");
 	UE_LOG(LogSpotify, Verbose, TEXT("Requesting Volume."));
 }
 
@@ -275,6 +275,8 @@ void USpotifyService::ReceiveRefreshKey(FHttpRequestPtr Request, FHttpResponsePt
 			AccessKey = ParsedResponse->GetStringField("access_token");
 			RefreshKey = ParsedResponse->GetStringField("refresh_token");
 			// Resfresh Access Key 50 Seconds before it expires.
+			GetWorld()->GetTimerManager().ClearTimer(AccessKeyExpireTimerHandle);
+			GetWorld()->GetTimerManager().ClearTimer(PlaybackInfoTimerHandle);
 			GetWorld()->GetTimerManager().SetTimer(AccessKeyExpireTimerHandle, this, &USpotifyService::RefreshAccessKey, Expires - 50, false);
 			GetWorld()->GetTimerManager().SetTimer(PlaybackInfoTimerHandle, this, &USpotifyService::RequestPlaybackInformation, 1, true);
 		}
@@ -293,21 +295,22 @@ void USpotifyService::ReceivePlaybackInformation(FHttpRequestPtr Request, FHttpR
 	{
 		const TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
 		TSharedPtr<FJsonObject> ParsedResponse;
-
 		if(FJsonSerializer::Deserialize(JsonReader, ParsedResponse))
 		{
 			
-			int Progress = ParsedResponse->GetIntegerField("progress_ms");
-			bool Playing = ParsedResponse->GetBoolField("is_playing");
-
+			const int Progress = ParsedResponse->GetIntegerField("progress_ms");
+			const bool Playing = ParsedResponse->GetBoolField("is_playing");
 			
+
+			const TSharedPtr<FJsonObject> Device = ParsedResponse->GetObjectField("device");
 			const TSharedPtr<FJsonObject> Item = ParsedResponse->GetObjectField("item");
 			const TArray<TSharedPtr<FJsonValue>> Artists = Item->GetArrayField("artists");
 			const TSharedPtr<FJsonObject> Album = Item->GetObjectField("album");
-			
-			int Duration = Item->GetIntegerField("duration_ms");
-			FString SongName = Item->GetStringField("name");
-			FString AlbumName = Album->GetStringField("name");
+
+			const int Volume = Device->GetIntegerField("volume_percent");
+			const int Duration = Item->GetIntegerField("duration_ms");
+			const FString SongName = Item->GetStringField("name");
+			const FString AlbumName = Album->GetStringField("name");
 			TArray<FString> ArtistNames;
 			for(const auto& Artist : Artists)
 			{
@@ -320,7 +323,7 @@ void USpotifyService::ReceivePlaybackInformation(FHttpRequestPtr Request, FHttpR
 				return;
 			}
 			SongId = Item->GetStringField("id");
-			OnReceivePlaybackDataDelegate.Broadcast(SongName, ArtistNames, AlbumName, 1.f, Duration, Progress, Playing);
+			OnReceivePlaybackDataDelegate.Broadcast(SongName, ArtistNames, AlbumName, Volume, Duration, Progress, Playing);
 			
 		}
 	}
@@ -344,6 +347,10 @@ void USpotifyService::ReceivePlay(FHttpRequestPtr Request, FHttpResponsePtr Resp
 	else if(Response->GetResponseCode() == 403)
 	{
 		UE_LOG(LogSpotify, Error, TEXT("User is Non-Premium"));
+	}
+	else
+	{
+		UE_LOG(LogSpotify, Error, TEXT("%s"), *Response->GetContentAsString());
 	}
 }
 

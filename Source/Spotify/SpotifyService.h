@@ -11,7 +11,7 @@
 
 // Params: Song Name, Artists, Album Name, Volume, Progress, Duration, isPlaying
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_SevenParams(FOnReceivePlaybackDataDelegate, FString, SongName, const TArray<FString>&,
-	Artists, FString, AlbumName, float, Volume, int, Progress, int, Duration, bool, isPlaying);
+	Artists, FString, AlbumName, int, Volume, int, Progress, int, Duration, bool, isPlaying);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnPlaybackAdvancedDelegate, int, Duration, int, Progress);
 
